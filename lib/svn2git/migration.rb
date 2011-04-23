@@ -45,7 +45,7 @@ module Svn2Git
       options[:exclude] = []
       options[:revision] = nil
       options[:username] = nil
-      options[:quiet] = nil
+      options[:quiet] = false
 
       if File.exists?(File.expand_path(DEFAULT_AUTHORS_FILE))
         options[:authors] = DEFAULT_AUTHORS_FILE
@@ -270,12 +270,12 @@ module Svn2Git
     def git(cmd, env={})
       gitcmd, cmd = cmd.split(/\s/, 2)
       git = ['git', gitcmd]
-      git += ['--quiet'] if @options[:quiet] and ['checkout', 'log', 'rebase', 'gc'].include?(gitcmd)
-      if gitcmd == 'svn'
+      git << '--quiet' if @options[:quiet] and ['checkout', 'rebase', 'gc'].include?(gitcmd)
+      if gitcmd == 'svn' and @options[:quiet]
         svncmd, = cmd.split(/\s/, 2)
-       git += ['--quiet'] unless svncmd == 'init'
+        git << '--quiet' unless svncmd == 'init'
       end
-      git += ['--verbose'] if @options[:verbose] and ['rebase'].include?(gitcmd)
+      git << '--verbose' if @options[:verbose] and ['rebase'].include?(gitcmd)
       git = env.collect {|k,v| "#{k}='#{v}'"} + git + [cmd]
       run_command git.join(' ')
     end
