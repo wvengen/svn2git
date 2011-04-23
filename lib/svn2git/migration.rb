@@ -270,7 +270,11 @@ module Svn2Git
     def git(cmd, env={})
       gitcmd, cmd = cmd.split(/\s/, 2)
       git = ['git', gitcmd]
-      git += ['--quiet'] if @options[:quiet] and ['checkout', 'log', 'rebase', 'svn', 'gc'].include?(gitcmd)
+      git += ['--quiet'] if @options[:quiet] and ['checkout', 'log', 'rebase', 'gc'].include?(gitcmd)
+      if gitcmd == 'svn'
+        svncmd, = cmd.split(/\s/, 2)
+       git += ['--quiet'] unless svncmd == 'init'
+      end
       git += ['--verbose'] if @options[:verbose] and ['rebase'].include?(gitcmd)
       git = env.collect {|k,v| "#{k}='#{v}'"} + git + [cmd]
       run_command git.join(' ')
