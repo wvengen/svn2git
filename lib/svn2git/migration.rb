@@ -45,6 +45,7 @@ module Svn2Git
       options[:exclude] = []
       options[:revision] = nil
       options[:username] = nil
+      options[:quiet] = nil
 
       if File.exists?(File.expand_path(DEFAULT_AUTHORS_FILE))
         options[:authors] = DEFAULT_AUTHORS_FILE
@@ -121,6 +122,10 @@ module Svn2Git
           options[:verbose] = true
         end
 
+        opts.on('-q', '--quiet', 'Quiet, suppress feedback messages') do
+          options[:quiet] = true
+        end
+
         opts.separator ""
 
         # No argument, shows at tail.  This will print an options summary.
@@ -151,17 +156,17 @@ module Svn2Git
 
       if rootistrunk
         # Non-standard repository layout.  The repository root is effectively 'trunk.'
-        cmd = "git svn init --prefix=svn/ "
+        cmd = "svn init --prefix=svn/ "
         cmd += "--username=#{username} " unless username.nil?
         cmd += "--no-metadata " unless metadata
         if nominimizeurl
           cmd += "--no-minimize-url "
         end
         cmd += "--trunk=#{@url}"
-        run_command(cmd)
+        git(cmd)
 
       else
-        cmd = "git svn init --prefix=svn/ "
+        cmd = "svn init --prefix=svn/ "
 
         # Add each component to the command that was passed as an argument.
         cmd += "--username=#{username} " unless username.nil?
@@ -175,12 +180,12 @@ module Svn2Git
 
         cmd += @url
 
-        run_command(cmd)
+        git(cmd)
       end
 
-      run_command("git config svn.authorsfile #{authors}") unless authors.nil?
+      git("config svn.authorsfile #{authors}") unless authors.nil?
 
-      cmd = "git svn fetch "
+      cmd = "svn fetch "
       cmd += "-r #{revision}:HEAD " unless revision.nil?
       unless exclude.empty?
         # Add exclude paths to the command line; some versions of git support
@@ -194,7 +199,7 @@ module Svn2Git
         regex = '^(?:' + regex.join('|') + ')(?:' + exclude.join('|') + ')'
         cmd += "'--ignore-paths=#{regex}'"
       end
-      run_command(cmd)
+      git(cmd)
 
       get_branches
     end
@@ -202,8 +207,8 @@ module Svn2Git
     def get_branches
       # Get the list of local and remote branches, taking care to ignore console color codes and ignoring the
       # '*' character used to indicate the currently selected branch.
-      @local = run_command("git branch -l --no-color").split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
-      @remote = run_command("git branch -r --no-color").split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
+      @local = git("branch -l --no-color").split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
+      @remote = git("branch -r --no-color").split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
 
       # Tags are remote branches that start with "tags/".
       @tags = @remote.find_all { |b| b.strip =~ %r{^svn\/tags\/} }
@@ -213,13 +218,13 @@ module Svn2Git
       @tags.each do |tag|
         tag = tag.strip
         id = tag.gsub(%r{^svn\/tags\/}, '').strip
-        subject = run_command("git log -1 --pretty=format:'%s' #{tag}")
-        date = run_command("git log -1 --pretty=format:'%ci' #{tag}")
+        subject = git("log -1 --pretty=format:'%s' #{tag}")
+        date = git("log -1 --pretty=format:'%ci' #{tag}")
         subject = escape_quotes(subject)
         date = escape_quotes(date)
         id = escape_quotes(id)
-        run_command("GIT_COMMITTER_DATE='#{date}' git tag -a -m '#{subject}' '#{id}' '#{escape_quotes(tag)}'")
-        run_command("git branch -d -r #{tag}")
+        git("tag -a -m '#{subject}' '#{id}' '#{escape_quotes(tag)}'", {'GIT_COMMITTER_DATE'=>date})
+        git("branch -d -r #{tag}")
       end
     end
 
@@ -228,7 +233,7 @@ module Svn2Git
       svn_branches = @remote.find_all { |b| b.strip =~ %r{^svn\/} }
 
       if @options[:rebase]
-         run_command("git svn fetch")
+         git("svn fetch")
       end
 
       svn_branches.each do |branch|
@@ -236,30 +241,39 @@ module Svn2Git
         if @options[:rebase] && (@local.include?(branch) || branch == 'trunk')
            lbranch = branch
            lbranch = 'master' if branch == 'trunk'
-           run_command("git checkout -f #{lbranch}")
-           run_command("git rebase remotes/svn/#{branch}")
+           git("checkout -f #{lbranch}")
+           git("rebase remotes/svn/#{branch}")
            next
         end
 
         next if branch == 'trunk' || @local.include?(branch)
-        run_command("git branch --track #{branch} remotes/svn/#{branch}")
-        run_command("git checkout #{branch}")
+        git("branch --track #{branch} remotes/svn/#{branch}")
+        git("checkout #{branch}")
       end
     end
 
     def fix_trunk
       trunk = @remote.find { |b| b.strip == 'trunk' }
       if trunk && ! @options[:rebase]
-        run_command("git checkout svn/trunk")
-        run_command("git branch -D master")
-        run_command("git checkout -f -b master")
+        git("checkout svn/trunk")
+        git("branch -D master")
+        git("checkout -f -b master")
       else
-        run_command("git checkout -f master")
+        git("checkout -f master")
       end
     end
 
     def optimize_repos
-      run_command("git gc")
+      git("gc")
+    end
+
+    def git(cmd, env={})
+      gitcmd, cmd = cmd.split(/\s/, 2)
+      git = ['git', gitcmd]
+      git += ['--quiet'] if @options[:quiet] and ['checkout', 'log', 'rebase', 'svn', 'gc'].include?(gitcmd)
+      git += ['--verbose'] if @options[:verbose] and ['rebase'].include?(gitcmd)
+      git = env.collect {|k,v| "#{k}='#{v}'"} + git + [cmd]
+      run_command git.join(' ')
     end
 
     def run_command(cmd)
@@ -288,7 +302,7 @@ module Svn2Git
     end
 
     def verify_working_tree_is_clean
-      status = run_command('git status --porcelain --untracked-files=no')
+      status = git('status --porcelain --untracked-files=no')
       unless status.strip == ''
         puts 'You have local pending changes.  The working tree must be clean in order to continue.'
         exit -1
